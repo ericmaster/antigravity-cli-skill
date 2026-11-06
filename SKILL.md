@@ -30,7 +30,8 @@ Key differences from Gemini CLI:
 | `--prompt-interactive`| `-i` | Runs an initial prompt interactively and continues the session. |
 | `--continue` | `-c` | Continues the most recent conversation in the current workspace. |
 | `--conversation <id>` | | Resumes a specific conversation by its ID. |
-| `--dangerously-skip-permissions` | | **CRITICAL for automation.** Auto-approves all tool permission requests. |
+| `--dangerously-skip-permissions` | | Auto-approves all tool permission requests. Only for trusted automation with explicit task-specific authority; see [permission policy](#untrusted-input-permission-policy). |
+| `--settings <json-or-path>` | | Settings for this session only, never saved: a JSON object of `settings.json` keys, inline or as a file path. Check installed `agy --help` for support. |
 | `--add-dir <path>` | | Adds a directory to the workspace (repeatable). |
 | `--sandbox` | | Runs in a sandbox with terminal restrictions enabled. |
 | `--model <model>` | | Specifies the model to use for the current CLI session. |
@@ -90,7 +91,7 @@ List available models for CLI sessions.
 ### The "Print Mode" Trap (`-p`)
 > [!WARNING]
 > Running `agy -p` is excellent for quick tasks, but it has critical caveats in an automated environment:
-> - **Permissions**: You MUST use `--dangerously-skip-permissions` or the command will hang silently waiting for approval.
+> - **Permissions**: Configure task-scoped permission rules before headless execution. Approval requests can block automation; bypass is optional and requires explicit authority for the trusted task, not merely permission to run `agy`. Never use bypass for untrusted-input automation or enforcement probes.
 > - **First run**: agy may require initial interactive setup before print mode works. If `-p` hangs with zero output on a fresh install, run `agy` interactively first to complete auth/setup.
 > - **Timeout**: Print mode has a default 5-minute timeout (`--print-timeout`). For long-running tasks, increase it: `--print-timeout 30m`.
 > - **Output**: stdout may be buffered. Use `--log-file` if you need to track execution details.
@@ -98,8 +99,10 @@ List available models for CLI sessions.
 ### Spawning Subagents
 You can use `agy` to spawn other agents to handle sub-tasks.
 ```bash
-agy -p "Review this code: $(cat main.py)" --dangerously-skip-permissions
+agy -p "Review this code: $(cat main.py)" \
+  --disable-slash-commands --settings ./deny-tools.json --add-dir "$(pwd)"
 ```
+Use the policy below for `deny-tools.json`; slash-command suppression alone is not tool permission enforcement.
 By nesting CLI calls, you can create hierarchical agent structures.
 
 ### Resuming Conversations
@@ -109,6 +112,8 @@ To maintain context across different execution steps:
 3. Resume a specific session: `agy --conversation <id>`
 
 ## Advanced Automation Patterns
+
+The bypass examples below assume trusted input and explicit task-specific authority to auto-approve the task's tool actions. Otherwise use scoped permissions; for untrusted content use the deny policy below. Continuing a conversation does not grant new authority.
 
 ### Multi-turn Continuity (`-c` + `-p`)
 You can chain non-interactive prompts by combining the continue flag (`-c`) with print mode (`-p`). This is the preferred way for agents to perform multi-step tasks without a TTY:
@@ -125,7 +130,8 @@ agy -c -p "Now add a basic index.html" --dangerously-skip-permissions
 To ensure the agent has the correct context (bypassing persistent workspace issues), inject file content directly into the prompt:
 
 ```bash
-agy -p "$(cat README.md)\n\nBased on this file, what is the project goal?" --dangerously-skip-permissions
+agy -p "$(cat README.md)\n\nBased on this file, what is the project goal?" \
+  --disable-slash-commands --settings ./deny-tools.json --add-dir "$(pwd)"
 ```
 
 ### Targeted Workspace Addition
@@ -166,6 +172,31 @@ To manage this:
   - **Configurable Launch Timeout**: A configurable timeout for launching MCP servers is supported in `v1.0.7+`. Specify a custom duration or set it to `-1` to disable the timeout completely (placed within the server definition block in `mcp_config.json`).
   - **Preserving Unknown Settings**: Unknown fields inside `settings.json` are preserved during read, write, and merge operations, preventing configurations from being silently wiped when upgrading/downgrading.
   - **Clipboard Support**: Linux now has native Wayland clipboard support via `wl-paste`, falling back to `xclip` on X11, prioritizing copied files over raw image data.
+
+#### Untrusted-input permission policy
+
+For analysis of emails, scraped pages, repository text, or other untrusted input, pass a session-only policy with all six supported action namespaces denied. Save this JSON as `deny-tools.json` outside untrusted control, then use `--settings /absolute/path/to/deny-tools.json` (or pass the JSON inline):
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "command(*)", "read_file(*)", "write_file(*)",
+      "read_url(*)", "execute_url(*)", "mcp(*)"
+    ]
+  }
+}
+```
+
+[Official permission rules](https://antigravity.google/docs/permissions?tab=cli) use `action(target)` with precedence **Deny > Ask > Allow**. A native forced `run_command` check on the installed binary (2026-11-06) confirmed command denial even with `command(*)` in `allow`. This is command-only evidence, not validation of every action or future CLI version. Check installed `agy --help` for session-only `--settings`; reject unsupported flags/settings/actions or inconclusive enforcement instead of retrying unrestricted. Unknown settings may be preserved or ignored: successful startup alone proves nothing.
+
+Keep `--dangerously-skip-permissions` absent. Use `--disable-slash-commands` for literal prompt input where supported; neither it, a read-only prompt, nor this permission policy provides OS isolation. Tool denials do not contain startup, configuration loading, authentication, plugins, or MCP initialization.
+
+**Validate or recover a permission probe:**
+1. Use a fresh temporary `HOME` and disposable workspace with no inherited global MCP configuration/plugins. Keep evidence private and outside Git. Use a loopback-only mock model endpoint with a placeholder credential and an explicitly authorized test configuration; no real provider requests or user credential/config changes.
+2. Capture the actual tool declarations advertised by the installed CLI. Emit a forced `run_command` call with arguments valid against that declaration and a harmless marker command; do not guess the schema. Include both `command(*)` allow and the deny policy above to test deny precedence, without bypass.
+3. Assert the native tool event contains a permission-specific denial matching the configured deny rule, and the marker command did not execute. Final model text, voluntary avoidance, argument-validation errors, or timeout are not proof. On schema failure, correct the call from the captured declaration before retrying; on startup failure, diagnose configuration rather than increasing the same probe's timeout.
+4. Retain binary identity, policy, captured declaration, tool result, and process exit status. Report command-only coverage and remaining untested actions; even a successful CLI exit is not an enforcement assertion.
 
 ### Interactive Interface & Commands
 
@@ -222,7 +253,7 @@ If you previously used Gemini CLI:
 1. Import your extensions: `agy plugin import gemini`
 2. Note flag differences (see Known Limitations table above)
 3. Replace `gemini -p` with `agy -p` in scripts
-4. Replace `--yolo` with `--dangerously-skip-permissions`
+4. Replace `--yolo` only for explicitly authorized trusted automation; use the untrusted-input policy otherwise.
 5. Replace `--resume <id>` with `--conversation <id>`
 
 ## Gemini CLI Flag Mapping
@@ -232,7 +263,7 @@ Quick reference for translating Gemini CLI commands to agy:
 | Gemini CLI | agy Equivalent | Notes |
 | :--- | :--- | :--- |
 | gemini -p "prompt" | `agy -p "prompt"` | Same semantics |
-| gemini --yolo | `agy --dangerously-skip-permissions` | Longer but same effect |
+| gemini --yolo | `agy --dangerously-skip-permissions` | Explicitly authorized trusted automation only |
 | gemini --resume <id> | `agy --conversation <id>` | Different flag name |
 | gemini -o stream-json | N/A | Not available in v1.0.7 |
 | gemini -m <model> | `agy --model <model>` | Supported in v1.0.5+ |
@@ -240,9 +271,9 @@ Quick reference for translating Gemini CLI commands to agy:
 
 ## Troubleshooting
 
-- **Hangs/Timeouts (print mode)**: Usually caused by missing `--dangerously-skip-permissions`. Can also indicate first-run setup is needed -- run `agy` interactively once to initialize.
+- **Hangs/Timeouts (print mode)**: Check permission requests and first-run setup. Use scoped rules or authorized interactive setup, not an unrestricted retry; see [untrusted-input permission policy](#untrusted-input-permission-policy) for enforcement probes.
 - **Hangs/Timeouts (long tasks)**: Increase `--print-timeout` beyond the default 5 minutes.
-- **Permission Denied**: Check if `--sandbox` is restricting the operation, or if the OS requires manual approval.
+- **Permission Denied**: Inspect the native tool error and effective permission rules as well as sandbox/OS restrictions. A configured denial is an expected enforcement result, not a reason to add bypass.
 - **Lost Context**: Use `agy --conversation <id>` to recover a specific session state.
 - **Extensions missing after migration**: Run `agy plugin import gemini` to port Gemini CLI extensions.
 - **Binary not found**: Check `~/.local/bin/agy` or run `agy install` to configure PATH. On some Linux distros, the binary is named `antigravity`.

@@ -7,7 +7,8 @@
 | `--prompt-interactive` | `-i` | Interactive mode with initial prompt |
 | `--continue` | `-c` | Continue last conversation |
 | `--conversation <id>` | | Resume specific session |
-| `--dangerously-skip-permissions` | | Auto-approve everything |
+| `--dangerously-skip-permissions` | | Auto-approve everything; explicitly authorized trusted tasks only |
+| `--settings <json-or-path>` | | Session-only settings JSON or file path, never saved; verify installed help |
 | `--sandbox` | | Restricted execution mode |
 | `--model <model>` | | Model for the current CLI session |
 | `--print-timeout <dur>` | | Print mode timeout (default: 5m) |
@@ -66,7 +67,7 @@
 - **Workspace Scoping**: `agy` uses persistent state. **CWD DOES NOT SCOPE THE SESSION**. Use `--add-dir` or explicit injection.
 - **Tool calls limit**: Gemini models support up to 512 tool calls per turn (v1.0.7+).
 - **Subagents Filtering**: Subagent sessions are filtered from the `/resume` list (v1.0.6+).
-- Always pair `-p` with `--dangerously-skip-permissions` in scripts.
+- Use task-scoped permissions for scripts. Bypass requires explicit task-specific authority for trusted input; never use it for untrusted input or enforcement probes. See [policy and validation](../SKILL.md#untrusted-input-permission-policy).
 - First run may require interactive setup before `-p` works.
 - Default print timeout is 5 minutes -- increase with `--print-timeout` for long tasks.
 - No NDJSON streaming output in v1.0.7 -- you get plain text only.

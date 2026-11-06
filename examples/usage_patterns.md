@@ -1,5 +1,7 @@
 # agy CLI Usage Patterns
 
+Examples using `--dangerously-skip-permissions` require trusted input and explicit task-specific authority to auto-approve tool actions. They are not defaults for all automation. For untrusted content or enforcement probes, use the [session-only deny policy and native validation procedure](../SKILL.md#untrusted-input-permission-policy), without bypass.
+
 ## Pattern 1: Non-Interactive Code Generation
 Useful for generating snippets or files without manual intervention.
 
@@ -160,5 +162,4 @@ Version 1.0.7 adds support for installing plugins directly from subpaths within 
 # Install a plugin located in a repository subpath on a specific branch
 agy plugin install github.com/owner/repo/subpath@branch-name
 ```
-
 
